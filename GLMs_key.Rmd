@@ -1,0 +1,220 @@
+---
+title: "Generalized Linear Models"
+output: pdf_document
+---
+
+\renewcommand{\vec}[1]{\mathbf{#1}}
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.height = 4, fig.width = 6, fig.align = 'center')
+library(tidyverse) 
+library(rstanarm)
+library(arm)
+library(gridExtra)
+set.seed(01142021)
+```
+
+We have seen linear regression and logistic regression, both of which are examples of generalized linear models (GLMs), but there are many other possible generalized linear models.
+
+\vfill
+
+*GLMs are typically characterized by three components:*
+
+\vfill
+
+*1. linear prediction of predictors ($X\beta$)*
+
+\vfill
+
+*2. A link function for transforming the linear predictor to match the support of the response.*
+
+\vfill
+
+*3. A probability distribution for the data.*
+
+\vfill
+
+A generalized linear model can also include other parameters such as variance or overdispersion terms and/or cutpoints for latent responses.
+
+\vfill
+
+When formally writing out a GLM, it is important to include these three components:
+
+\begin{align}
+y &\sim Bernoulli(\pi)\\
+logit(\pi) & = XB
+\end{align}
+
+\vfill
+\newpage
+
+Chapter 15 in ROS mentions another set of GLMs which we will cover:
+\vfill
+
+- Poisson and negative binomial models for count data
+
+\vfill
+
+- logistic-binomial model, where $y_i$ is a set of $n_i$ Bernoulli trials and a related (beta-binomial model)
+
+\vfill
+
+- The probit model for binary data
+
+\vfill
+
+- Multinomial logit (and probit models) for categorical data, both ordered and unordered
+
+\vfill
+
+- Robust regression, using non-normal errors for continuous data.
+
+\vfill
+
+#### Count Regression
+
+*Count regression is applicable with the response term is a non-negative integer. These scenarios generally do not have a maximum value, such as the number of MSU students that are infected with COVID-19, which are more appropriately modeled using a binomial framework.*
+
+\vfill
+
+The motivating example that we will use for this scenario is a dataset that contains the total number of daily bike rentals from the Capital Bikeshare System in Washington, DC.
+\vfill
+
+
+```{r}
+bikes <- read_csv("https://raw.githubusercontent.com/STAT506/GLM_Lectures/main/daily_bike.csv")
+bikes <- bikes %>% mutate(temp_centered = scale(temp))
+```
+
+\newpage
+
+```{r, echo = F}
+fig1 <- bikes %>% ggplot(aes(x = casual)) + geom_histogram(bins = 40) + theme_bw() +
+  ggtitle("Casual User Bike Rentals from Capital Bike Share") +
+  xlab('daily rentals')
+fig1
+```
+\vfill
+```{r, echo = F}
+bikes %>% ggplot(aes(y = casual, x = temp)) + geom_point(alpha = .5) + theme_bw() +
+  ggtitle("Casual User Bike Rentals vs Scaled Temperature") +
+  xlab('Scaled Temperature') + ylab('daily rentals') +
+  geom_smooth(formula = 'y~x', method = 'loess', se = F)
+```
+
+\newpage
+
+\vfill
+
+*The starting point for count regression is the Poisson model:*
+
+\begin{align}
+  y_i & \sim Poisson(\mu_i)\\
+  \log(\mu_i) & = X_i \beta
+\end{align}
+
+\vfill
+
+*one implication of this model is that a one unit increase in $X\beta$ would have a logarithmic relationship with y*
+
+\vfill
+
+*Furthermore, the Poisson distribution also has a single parameter that controls the mean __and__ variance of the distribution, so the standard deviation implied by the model would be $\sqrt(\mu_i)$*
+
+\vfill
+
+*When there is more variance in the data than the data would suggest, this phenomenon is referred to as overdispersion*
+
+\vfill
+
+In the presence of overdispersion, negative binomial regression is a common solution. *Note, sometimes a quasi-Poisson distribution is used too*
+
+\vfill
+
+
+\begin{align}
+  y_i & \sim Negative Binomial(\mu_i, \phi)\\
+  \log(\mu_i) & = X_i \beta
+\end{align}
+
+\vfill
+
+The parameter $\phi$ can account for additional dispersion in the model. Formally, the standard deviation of $y|x = \sqrt{E(y|x) + E(y|x)/\phi}$. So when $\phi \rightarrow \infty$ this limit results in a Poisson distribution.
+
+\newpage
+#### Model Fitting and Intepreting Coefficients
+
+```{r}
+nb_model <- stan_glm(casual ~ temp_centered, family = neg_binomial_2, data = bikes, refresh = 0)
+print(nb_model)
+```
+\vfill
+
+```{r}
+plot(nb_model) + theme_bw() + ggtitle('Credible Intervals for Model Parameters')
+```
+
+\newpage
+
+*The intercept can be interpreted as the expected outcome (on the log scale) when the other predictors are zero. Or, more intuitively the exponential of the intercept is the expected outcome when the other predictors are zero.*
+
+\vfill
+
+So in the case $\exp(\beta_0) =$ `r round(exp(nb_model$coefficients['(Intercept)'])) %>% as.numeric()` with a credible interval of (`r round(exp(posterior_interval(nb_model, prob = .95 )[1,1]))`, `r round(exp(posterior_interval(nb_model, prob = .95 )[1,2]))`).
+
+\vfill
+
+*The slope coefficient in this model represents the expected difference in y (but again in the logarithmic scale).*
+
+\vfill
+
+Given that the model can be simplified as $y \sim NB(\exp(\beta_0 + \beta_1 x), \phi)$, the coefficient can also be interpreted in a multiplicative way. In particular $\exp(\beta_1)$ is the multiplicative change in y for a one unit change in x. *Again, think about utility of scaling or meaningful units.*
+
+\vfill
+
+So with this model $\exp(\beta_1)=$ `r round(exp(nb_model$coefficients['temp_centered']),2) %>% as.numeric()` with a credible interval of (`r round(exp(posterior_interval(nb_model, prob = .95 )[2,1]),2)`, `r round(exp(posterior_interval(nb_model, prob = .95 )[2,2]),2)`).
+
+\vfill
+
+#### Count GLMS with Exposure
+
+*In many situations there is an "exposure term". With our bike share example, the exposure would be one day for each observation, so the exposure essentially cancels out.*
+
+\vfill
+
+In other situations, the exposure could vary and the model could explicitly include this in the model.
+
+$$y_i \sim NB(u_i \theta_i, \psi),$$
+
+*where $\theta_i$ is a rate per unit exposure and $u_i$ is the exposure.*
+
+\newpage
+
+As with other regression frameworks, posterior predictive checks can be a useful tool for model checking.
+
+```{r}
+pois_model <- stan_glm(casual ~ temp_centered, family = poisson, data = bikes, refresh = 0)
+pp <- posterior_predict(pois_model)
+```
+
+\vfill
+This can either be done visually
+
+```{r}
+tibble(obs = c(bikes$casual, pp[1,], pp[2,], pp[3,]), 
+       group = rep(c('data','sim1','sim2','sim3'), each = ncol(pp))) %>% 
+  ggplot(aes(x = obs)) + geom_histogram(bins = 40) + facet_wrap(.~ group) + theme_bw()
+```
+
+\vfill
+
+or by comparing summary statistics between the simulated datasets and the observed data.
+
+```{r, fig.cap = 'Vertical line represents maximum value in observed dataset'}
+sim_max = apply(pp,1,max)
+data_max = max(bikes$casual)
+tibble(sim_max = sim_max) %>% ggplot(aes(x = sim_max)) + geom_histogram(bins = 50 ) +
+  geom_vline(xintercept = data_max) + theme_bw() + 
+  ggtitle("Comparison of maximum value from simulation vs model fit")
+```
+
